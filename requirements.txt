@@ -1,0 +1,9 @@
+Flask
+flask-cors
+joblib
+scikit-learn
+tensorflow
+torch
+sentence-transformers
+pandas
+numpy

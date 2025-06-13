@@ -1,0 +1,680 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import csv
+import re
+import nltk
+import pickle
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from nltk.stem import WordNetLemmatizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sentence_transformers import SentenceTransformer, util
+import torch
+import warnings
+import joblib
+# Instalasi library yang dibutuhkan
+!pip install pandas torch sentence-transformers scikit-learn tensorflow
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+# Mengunduh resource NLTK yang diperlukan
+try:
+    stopwords.words('english')
+except LookupError:
+    nltk.download('stopwords')
+try:
+    nltk.data.find('corpora/wordnet.zip')
+except LookupError:
+    nltk.download('wordnet')
+    nltk.download('omw-1.4')
+
+
+# Dataset CV
+file_id1 = '1rwbz0ztKjfASS0--uO2SBsq0bP4rIYj9'
+url1 = f'https://drive.google.com/uc?id={file_id1}'
+df_resume = pd.read_csv(url1, sep=',')
+
+print("Dataset berhasil dimuat.")
+print(f"Jumlah baris awal: {len(df_resume)}")
+df_resume.head()
+
+# Dataset Pekerjaan
+file_id2 = '1i4-MAdJDgl4pxSRUr3SwEvs7MrGxM_7o'
+url2 = f'https://drive.google.com/uc?id={file_id2}'
+df_jd = pd.read_csv(url2, sep=',')
+
+print("Dataset berhasil dimuat.")
+print(f"Jumlah baris awal: {len(df_jd)}")
+df_jd.head()
+
+# Inspeksi Data (Untuk mengetahui nama kolom)
+print("Info Job Description (JD):")
+df_jd.info()
+print("\nInfo Resume:")
+df_resume.info()
+
+# Penyesuaian Berdasarkan Informasi Dataset
+
+# Gabungkan kolom relevan dari Job Description (JD)
+jd_cols_to_combine = ['Role', 'Job Description', 'skills', 'Responsibilities']
+df_jd['JD_combined'] = df_jd[jd_cols_to_combine].apply(
+    lambda x: ' '.join(x.dropna().astype(str)),
+    axis=1
+)
+
+# Gabungkan kolom relevan dari Resume
+resume_cols_to_combine = ['Category', 'Summary', 'Skills', 'Experience', 'Education', 'Projects', 'Certifications']
+df_resume['Resume_combined'] = df_resume[resume_cols_to_combine].apply(
+    lambda x: ' '.join(x.dropna().astype(str)),
+    axis=1
+)
+# Akhir Penyesuaian
+
+print("Data berhasil dimuat dan kolom relevan telah digabungkan.")
+
+# Fungsi Pra-pemrosesan Teks
+print("Tahap 2: Mendefinisikan Fungsi Pra-pemrosesan Teks")
+
+stop_words_indonesian = set(stopwords.words('indonesian'))
+
+def preprocess_text(text):
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    text = re.sub(r'[^a-z\s]', '', text)
+    words = text.split()
+    filtered_words = [word for word in words if word not in stop_words_indonesian]
+    return " ".join(filtered_words)
+
+# Terapkan fungsi pra-pemrosesan ke kolom yang sudah digabung
+df_jd['cleaned_jd'] = df_jd['JD_combined'].apply(preprocess_text)
+df_resume['cleaned_resume'] = df_resume['Resume_combined'].apply(preprocess_text)
+
+print("Fungsi pra-pemrosesan siap.")
+
+# Melatih Model Machine Learning (TF-IDF Vectorizer)
+print("Tahap 3: Melatih Model TF-IDF")
+
+corpus = pd.concat([df_jd['cleaned_jd'], df_resume['cleaned_resume']]).dropna()
+tfidf_vectorizer = TfidfVectorizer(max_features=5000)
+tfidf_vectorizer.fit(corpus)
+
+print("Model TF-IDF berhasil dilatih.")
+print(f"Ukuran kamus (vocabulary size): {len(tfidf_vectorizer.get_feature_names_out())} kata.")
+
+# Menyimpan Model yang Sudah Dilatih
+print("Tahap 4: Menyimpan model (Vectorizer)")
+
+with open('tfidf_vectorizer.pkl', 'wb') as f:
+    pickle.dump(tfidf_vectorizer, f)
+
+print("Model telah disimpan ke file 'tfidf_vectorizer.pkl'.")
+
+# Membuat Fungsi untuk Analisis Kecocokan
+print("Tahap 5: Membuat Fungsi Analisis")
+
+def get_match_score(resume_text, jd_text):
+    with open('tfidf_vectorizer.pkl', 'rb') as f:
+        loaded_vectorizer = pickle.load(f)
+
+    cleaned_resume = preprocess_text(resume_text)
+    cleaned_jd = preprocess_text(jd_text)
+
+    resume_vector = loaded_vectorizer.transform([cleaned_resume])
+    jd_vector = loaded_vectorizer.transform([cleaned_jd])
+
+    similarity_score = cosine_similarity(resume_vector, jd_vector)[0][0]
+
+    return similarity_score * 100
+
+print("Fungsi analisis siap digunakan.")
+
+# Contoh Penggunaan
+print("Tahap 6: Menjalankan Contoh Analisis Kecocokan")
+
+# Ambil satu contoh CV dan satu contoh Job Description dari data
+# Kolom asli digunakan untuk ditampilkan, dan kolom gabungan untuk dianalisis
+sample_resume_text = df_resume['Resume_combined'].iloc[10] # Ganti index untuk coba resume lain
+sample_jd_text = df_jd['JD_combined'].iloc[10] # Ganti index untuk coba JD lain
+
+# Dapatkan skor kecocokan
+match_percentage = get_match_score(sample_resume_text, sample_jd_text)
+
+# Tampilkan hasil
+print(f"Menganalisis kecocokan antara:\n")
+print(f"**POSISI:** {df_jd['Role'].iloc[10]}")
+print(f"**KANDIDAT (Kategori):** {df_resume['Category'].iloc[10]}\n")
+print("="*50)
+print(f"SKOR KECOCOKAN: {match_percentage:.2f}%")
+print("="*50)
+
+!pip install pandas torch sentence-transformers
+
+# Menonaktifkan beberapa peringatan yang tidak krusial
+warnings.filterwarnings("ignore")
+
+print("Tahap 1: Memuat dan Mempersiapkan Data")
+
+# Muat dataset
+try:
+    df_jd = pd.read_csv(url2, sep=',')
+    df_resume = pd.read_csv(url1, sep=',')
+except FileNotFoundError:
+    print("Pastikan file 'jd.csv' dan 'parsed_resumes.csv' ada di direktori yang sama.")
+    exit()
+
+# Penyesuaian Bahasa Inggris dan Kelengkapan Data
+jd_cols_to_combine = ['Role', 'Job Description', 'skills', 'Responsibilities']
+df_jd['JD_combined'] = df_jd[jd_cols_to_combine].apply(
+    lambda x: ' . '.join(x.dropna().astype(str)),
+    axis=1
+)
+
+resume_cols_to_combine = ['Category', 'Summary', 'Skills', 'Experience', 'Education', 'Projects', 'Certifications']
+df_resume['Resume_combined'] = df_resume[resume_cols_to_combine].apply(
+    lambda x: ' . '.join(x.dropna().astype(str)),
+    axis=1
+)
+
+# Untuk identifikasi yang jelas, ID unik ditambahkan
+df_resume['Resume_ID'] = df_resume.index
+df_jd['Job_ID'] = df_jd['Job Id']
+
+print("Data berhasil dimuat dan kolom relevan telah digabungkan.")
+print("-" * 30)
+
+# Memuat Model Canggih (Sentence-BERT)
+print("Tahap 2 (Baru): Memuat Model SBERT 'all-MiniLM-L6-v2'")
+model = SentenceTransformer('all-MiniLM-L6-v2')
+print("Model berhasil dimuat.")
+print("-" * 30)
+
+# Menghasilkan Embeddings
+print("Tahap 3 (Baru): Menghasilkan Vektor Embeddings untuk Semua CV dan JD")
+
+# Buat DataFrame kecil yang hanya berisi informasi penting untuk efisiensi
+df_jd_small = df_jd[['Job_ID', 'Role', 'JD_combined']].copy()
+df_resume_small = df_resume[['Resume_ID', 'Category', 'Filename', 'Resume_combined']].copy()
+
+resume_texts = df_resume_small['Resume_combined'].tolist()
+jd_texts = df_jd_small['JD_combined'].tolist()
+
+resume_embeddings = model.encode(resume_texts, convert_to_tensor=True, show_progress_bar=True)
+jd_embeddings = model.encode(jd_texts, convert_to_tensor=True, show_progress_bar=True)
+
+print("Embeddings berhasil dibuat.")
+print("-" * 30)
+
+# Menghitung Skor Kecocokan
+print("Tahap 4: Menghitung Matriks Skor Kecocokan")
+cosine_scores = util.cos_sim(resume_embeddings, jd_embeddings)
+print("Matriks skor berhasil dihitung.")
+print("-" * 30)
+
+# Membuat Laporan dari Matriks Skor
+print("Tahap 5: Membuat Laporan Akhir dari Matriks")
+
+results = []
+# Iterasi melalui matriks skor
+for i, resume_row in df_resume_small.iterrows():
+    for j, jd_row in df_jd_small.iterrows():
+        score = cosine_scores[i][j].item()
+        if score > 0.1:
+            results.append({
+                'Resume_ID': resume_row['Resume_ID'],
+                'Category': resume_row['Category'],
+                'Filename': resume_row['Filename'],
+                'Job_ID': jd_row['Job_ID'],
+                'Role': jd_row['Role'],
+                'Match_Score': score
+            })
+
+# Buat DataFrame dari hasil yang sudah difilter
+df_report = pd.DataFrame(results)
+
+# Urutkan berdasarkan skor tertinggi
+df_report_sorted = df_report.sort_values(by='Match_Score', ascending=False)
+
+# Format skor ke persentase
+df_report_sorted['Match_Score_%'] = (df_report_sorted['Match_Score'] * 100).map('{:.2f}%'.format)
+
+# Hapus kolom skor mentah yang tidak diformat
+df_clean_report = df_report_sorted.drop(columns=['Match_Score'])
+
+# Simpan laporan yang bersih ke file CSV
+output_filename = 'cv_jd_clean_report_optimized.csv'
+df_clean_report.to_csv(output_filename, index=False)
+
+print(f"Analisis Selesai! Laporan yang BERSIH disimpan di '{output_filename}'")
+print(f"Total pasangan yang relevan (skor > 30%): {len(df_clean_report)}")
+print("\n--- Contoh 5 Hasil Teratas dari Laporan Bersih ---")
+print(df_clean_report.head())
+print("-" * 30)
+
+df_clean_report.head(10)
+
+# Menonaktifkan peringatan yang tidak krusial
+warnings.filterwarnings("ignore")
+
+# Muat Dataset
+# Pastikan URL atau path file sudah benar
+file_id_resume = '1rwbz0ztKjfASS0--uO2SBsq0bP4rIYj9'
+url_resume = f'https://drive.google.com/uc?id={file_id_resume}'
+df_resume = pd.read_csv(url_resume, sep=',')
+
+file_id_jd = '1i4-MAdJDgl4pxSRUr3SwEvs7MrGxM_7o'
+url_jd = f'https://drive.google.com/uc?id={file_id_jd}'
+df_jd = pd.read_csv(url_jd, sep=',')
+
+print("Dataset berhasil dimuat.")
+
+# Gabungkan Kolom Relevan
+jd_cols_to_combine = ['Role', 'Job Description', 'skills', 'Responsibilities']
+df_jd['JD_combined'] = df_jd[jd_cols_to_combine].apply(
+    lambda x: ' . '.join(x.dropna().astype(str)), axis=1
+)
+
+resume_cols_to_combine = ['Category', 'Summary', 'Skills', 'Experience', 'Education', 'Projects', 'Certifications']
+df_resume['Resume_combined'] = df_resume[resume_cols_to_combine].apply(
+    lambda x: ' . '.join(x.dropna().astype(str)), axis=1
+)
+
+# Tambahkan ID unik untuk referensi
+df_resume['Resume_ID'] = df_resume.index
+df_jd['Job_ID'] = df_jd['Job Id']
+
+print("Kolom relevan berhasil digabungkan.")
+
+# Muat Model SBERT dan Hasilkan Embeddings
+model_sbert = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Untuk demonstrasi cepat, sebagian kecil data digunakan
+df_resume_sample = df_resume.sample(n=500, random_state=42)
+df_jd_sample = df_jd.sample(n=100, random_state=42)
+
+print("\nMembuat embeddings untuk sample data (500 CV, 100 JD)...")
+resume_embeddings = model_sbert.encode(df_resume_sample['Resume_combined'].tolist(), convert_to_tensor=True, show_progress_bar=True)
+jd_embeddings = model_sbert.encode(df_jd_sample['JD_combined'].tolist(), convert_to_tensor=True, show_progress_bar=True)
+
+# Hitung Skor Kecocokan (Cosine Similarity)
+cosine_scores = util.cos_sim(resume_embeddings, jd_embeddings)
+
+print("\nFondasi awal (embeddings dan skor) siap digunakan.")
+
+# Membuat Dataset untuk Pelatihan
+print("\nBagian 1: Mempersiapkan Data untuk Model Machine Learning")
+
+# Buat pasangan (CV, JD) dan menentukan label berdasarkan ambang batas skor
+pairs = []
+threshold = 0.4  # Ambang batas skor untuk dianggap "cocok"
+
+for i in range(len(df_resume_sample)):
+    for j in range(len(df_jd_sample)):
+        score = cosine_scores[i][j].item()
+        feature_vector = (resume_embeddings[i] - jd_embeddings[j]).cpu().numpy()
+        label = 1 if score > threshold else 0
+        pairs.append({'features': feature_vector, 'label': label})
+
+df_training = pd.DataFrame(pairs)
+
+# Cek distribusi label
+print("Distribusi Label:")
+print(df_training['label'].value_counts())
+
+# Memisahkan Data Latih dan Data Uji
+X = np.array(df_training['features'].tolist())
+y = df_training['label'].values
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+print(f"\nUkuran data latih: {X_train.shape[0]}")
+print(f"Ukuran data uji: {X_test.shape[0]}")
+
+# Melatih Model RandomForestClassifier
+print("\nMelatih model RandomForestClassifier...")
+classifier = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+classifier.fit(X_train, y_train)
+
+# Evaluasi Model
+print("Mengevaluasi model pada data uji...")
+y_pred = classifier.predict(X_test)
+
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nAkurasi Model: {accuracy:.2%}")
+print("\nLaporan Klasifikasi:")
+print(classification_report(y_test, y_pred))
+
+# Menyimpan Model yang Sudah Dilatih
+model_filename = 'cv_jd_classifier.joblib'
+joblib.dump(classifier, model_filename)
+print(f"\nModel klasifikasi berhasil dilatih dan disimpan sebagai '{model_filename}'")
+
+
+print("\nBagian 2: Membangun Sistem Rekomendasi Pekerjaan")
+
+def rekomendasi_pekerjaan(resume_id, top_n=5):
+    """
+    Merekomendasikan 'top_n' pekerjaan yang paling cocok untuk 'resume_id' tertentu.
+    """
+    if resume_id not in df_resume_sample['Resume_ID'].values:
+        return f"Error: Resume ID {resume_id} tidak ditemukan dalam sample data."
+
+    resume_idx_in_df = df_resume_sample.index[df_resume_sample['Resume_ID'] == resume_id].tolist()[0]
+    resume_loc = df_resume_sample.index.get_loc(resume_idx_in_df)
+    scores_for_resume = cosine_scores[resume_loc]
+    top_scores, top_indices = scores_for_resume.topk(top_n)
+
+    rekomendasi = []
+    for score, jd_idx in zip(top_scores, top_indices):
+        job_info = df_jd_sample.iloc[jd_idx.item()]
+        rekomendasi.append({
+            'Role': job_info['Role'],
+            'Job_Description': job_info['Job Description'][:100] + '...',
+            'Match_Score': f"{score.item():.2%}"
+        })
+
+    return pd.DataFrame(rekomendasi)
+
+# PENGGUNAAN
+test_resume_id = df_resume_sample['Resume_ID'].iloc[0]
+print("==============================================================")
+print(f"Contoh Rekomendasi Pekerjaan untuk Resume ID: {test_resume_id}")
+print(f"Kategori CV Asli: {df_resume_sample.loc[df_resume_sample['Resume_ID'] == test_resume_id, 'Category'].values[0]}")
+print("==============================================================")
+
+# Panggil fungsi untuk mendapatkan data rekomendasi
+hasil_rekomendasi = rekomendasi_pekerjaan(resume_id=test_resume_id, top_n=5)
+
+# Cek jika hasilnya tidak kosong, lalu cetak dengan format yang rapi
+if not hasil_rekomendasi.empty:
+    print("\nBerikut adalah TOP 5 rekomendasi pekerjaan yang cocok:\n")
+    # Iterasi melalui setiap baris DataFrame hasil
+    for index, row in hasil_rekomendasi.iterrows():
+        print(f"--- Rekomendasi Peringkat #{index + 1} ---")
+        print(f"  Posisi          : {row['Role']}")
+        print(f"  Skor Kecocokan  : {row['Match_Score']}")
+        print(f"  Deskripsi       : {row['Job_Description']}")
+        print("-" * 45 + "\n")
+else:
+    print("Tidak ada rekomendasi yang cocok ditemukan.")
+
+def clean_skills(text):
+    """
+    Fungsi yang lebih baik untuk membersihkan dan memisahkan string skills.
+    Menggunakan koma dan newline sebagai pemisah utama.
+    """
+    if not isinstance(text, str):
+        return set()
+
+    # Ubah ke huruf kecil dan ganti newline dengan koma
+    text = text.lower().replace('\n', ',')
+
+    # Hapus teks dalam kurung seperti (e.g., ...)
+    text = re.sub(r'\(.*?\)', '', text)
+
+    # Pisahkan berdasarkan koma, lalu bersihkan setiap skill
+    skills_list = [skill.strip() for skill in text.split(',') if skill.strip()]
+
+    # Hasilkan set dari skills yang sudah bersih
+    return set(skills_list)
+
+def evaluasi_cv(resume_id, job_id):
+    """
+    Versi perbaikan dari evaluasi_cv dengan output yang lebih rapi.
+    """
+    try:
+        cv_data = df_resume.loc[resume_id]
+        job_data = df_jd[df_jd['Job_ID'] == job_id].iloc[0]
+    except (KeyError, IndexError):
+        return "Error: Resume ID atau Job ID tidak valid."
+
+    cv_skills = clean_skills(cv_data.get('Skills', ''))
+    job_skills_set = clean_skills(job_data.get('skills', ''))
+
+    missing_skills = job_skills_set - cv_skills
+
+    # Hitung ulang skor untuk akurasi
+    cv_text = cv_data['Resume_combined']
+    jd_text = job_data['JD_combined']
+    pair_embedding_cv = model_sbert.encode(cv_text, convert_to_tensor=True)
+    pair_embedding_jd = model_sbert.encode(jd_text, convert_to_tensor=True)
+    score = util.cos_sim(pair_embedding_cv, pair_embedding_jd).item()
+
+    # Bagian Tampilan (Diperbaiki)
+    print("="*50)
+    print(f"EVALUASI CV (ID: {resume_id}) UNTUK PEKERJAAN '{job_data['Role']}'")
+    print("="*50)
+    print(f"SKOR KECOCOKAN KESELURUHAN: {score:.2%}\n")
+
+    if not missing_skills:
+        print("Analisis Keterampilan: CV Anda sudah mencantumkan semua keterampilan utama yang disebutkan dalam deskripsi pekerjaan ini. Sangat baik!")
+    else:
+        print("SARAN PERBAIKAN:")
+        print("Untuk meningkatkan peluang, pertimbangkan untuk menonjolkan pengalaman terkait keterampilan berikut yang ada di deskripsi pekerjaan namun tidak ditemukan di CV Anda:")
+
+        final_missing_list = []
+        for skill in missing_skills:
+            # Jika sebuah 'skill' ternyata adalah kalimat panjang (heuristic: lebih dari 3 kata),
+            # kita coba pisahkan berdasarkan spasi untuk ditampilkan.
+            if len(skill.split()) > 3:
+                final_missing_list.extend(skill.split())
+            else:
+                final_missing_list.append(skill)
+
+        # Cetak setiap skill dalam list akhir
+        for skill_item in sorted(list(set(final_missing_list))):
+             print(f"- {skill_item.capitalize()}")
+
+    print("="*50)
+
+
+# Penggunaan
+# Gunakan ID dari contoh Anda sebelumnya
+contoh_resume_id = 420
+contoh_job_id = df_jd[df_jd['Role'] == 'Art Education Coordinator'].iloc[0]['Job_ID']
+
+evaluasi_cv(resume_id=contoh_resume_id, job_id=contoh_job_id)
+
+
+# Langkah 1: Instalasi dan Persiapan Data
+# Untuk demonstrasi, gunakan sample data yang sama
+df_resume_sample = df_resume.sample(n=500, random_state=42)
+df_jd_sample = df_jd.sample(n=100, random_state=42)
+
+# Buat embeddings menggunakan SentenceTransformer
+model_sbert = SentenceTransformer('all-MiniLM-L6-v2')
+resume_embeddings = model_sbert.encode(df_resume_sample['Resume_combined'].tolist())
+jd_embeddings = model_sbert.encode(df_jd_sample['JD_combined'].tolist())
+
+# Buat dataset pelatihan (pasangan fitur dan label)
+pairs = []
+threshold = 0.4  # Ambang batas skor untuk dianggap "cocok" (label = 1)
+cosine_scores = util.cos_sim(resume_embeddings, jd_embeddings)
+
+for i in range(len(resume_embeddings)):
+    for j in range(len(jd_embeddings)):
+        # Fitur adalah selisih antara embedding CV dan JD
+        feature_vector = resume_embeddings[i] - jd_embeddings[j]
+        score = cosine_scores[i][j].item()
+        label = 1 if score > threshold else 0
+        pairs.append({'features': feature_vector, 'label': label})
+
+df_training = pd.DataFrame(pairs)
+X = np.array(df_training['features'].tolist())
+y = df_training['label'].values
+
+# Pisahkan data latih dan data uji
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+print(f"Data siap untuk dilatih dengan TensorFlow. Ukuran data latih: {X_train.shape[0]}")
+
+
+# Langkah 2: Mendefinisikan, Melatih, dan Menyimpan Model TensorFlow
+# Mendapatkan dimensi input dari bentuk fitur
+input_dim = X_train.shape[1]
+
+# Mendefinisikan arsitektur model menggunakan tf.keras.Sequential
+tf_model = Sequential([
+    # Input layer harus sesuai dengan dimensi vektor fitur
+    Dense(128, activation='relu', input_shape=(input_dim,)),
+    Dropout(0.3), # Dropout untuk mencegah overfitting
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    # Output layer dengan 1 neuron dan aktivasi sigmoid untuk klasifikasi biner (0 atau 1)
+    Dense(1, activation='sigmoid')
+])
+
+# Kompilasi model
+tf_model.compile(
+    optimizer='adam',
+    loss='binary_crossentropy', # Loss function yang tepat untuk klasifikasi biner
+    metrics=['accuracy']
+)
+
+# Tampilkan ringkasan arsitektur model
+tf_model.summary()
+
+# 3. Latih model
+print("\\nMemulai Pelatihan Model TensorFlow ---")
+history = tf_model.fit(
+    X_train,
+    y_train,
+    epochs=10, # Jumlah epoch bisa disesuaikan
+    batch_size=32,
+    validation_data=(X_test, y_test),
+    verbose=1
+)
+print("--- Pelatihan Selesai ---")
+
+# Evaluasi model
+loss, accuracy = tf_model.evaluate(X_test, y_test, verbose=0)
+print(f"\\nHasil Evaluasi Model TensorFlow:")
+print(f"  - Akurasi: {accuracy*100:.2f}%")
+print(f"  - Loss: {loss:.4f}")
+
+# Simpan model TensorFlow
+model_filename_tf = 'cv_jd_classifier_tf.h5'
+tf_model.save(model_filename_tf)
+print(f"\\nModel TensorFlow berhasil disimpan sebagai '{model_filename_tf}'")
+
+# LANGKAH 0: INSTALASI DAN KONFIGURASI
+# Instalasi library
+!pip install google-cloud-aiplatform pandas google-cloud-storage -q
+
+import json
+import google.auth
+from google.colab import auth
+from google.cloud import aiplatform, storage
+from vertexai.language_models import TextGenerationModel
+
+print("Library berhasil diimpor.")
+
+# Autentikasi
+auth.authenticate_user()
+
+# KONFIGURASI
+PROJECT_ID = "lexical-tide-462414-s5"
+REGION = "us-central1"
+BUCKET_NAME = "bucket-smart-recruiter-capstonedbs"
+
+# Inisialisasi Vertex AI
+try:
+    credentials, project = google.auth.default()
+    aiplatform.init(project=PROJECT_ID, location=REGION, staging_bucket=f"gs://{BUCKET_NAME}", credentials=credentials)
+    print(f"Berhasil terhubung ke Project ID: {PROJECT_ID} dan Bucket: {BUCKET_NAME}")
+except Exception as e:
+    print(f"Gagal! Error: {e}")
+
+# LANGKAH 1: MEMUAT DATASET ASLI
+print("\n[Langkah 1] Memuat dataset asli...")
+try:
+    url_resume = 'https://drive.google.com/uc?id=1rwbz0ztKjfASS0--uO2SBsq0bP4rIYj9'
+    df_resume = pd.read_csv(url_resume)
+    df_resume['Resume_combined'] = df_resume[['Category', 'Summary', 'Skills', 'Experience']].apply(
+        lambda x: ' . '.join(x.dropna().astype(str)), axis=1
+    )
+    url_jd = 'https://drive.google.com/uc?id=1i4-MAdJDgl4pxSRUr3SwEvs7MrGxM_7o'
+    df_jd = pd.read_csv(url_jd)
+    df_jd['JD_combined'] = df_jd[['Role', 'Job Description', 'skills']].apply(
+        lambda x: ' . '.join(x.dropna().astype(str)), axis=1
+    )
+    print("Dataset berhasil dimuat.")
+except Exception as e:
+    print(f"Gagal memuat dataset: {e}")
+
+# LANGKAH 2: MEMBUAT DATASET SINTETIS
+print("\n[Langkah 2] Membuat dataset sintetis...")
+
+# Menggunakan model 'text-bison' yang stabil
+model_generasi = TextGenerationModel.from_pretrained("text-bison@002")
+
+JUMLAH_CONTOH = 25
+cv_samples = df_resume.sample(n=JUMLAH_CONTOH, random_state=42)
+jd_samples = df_jd.sample(n=JUMLAH_CONTOH, random_state=42)
+
+jsonl_filename_local = "cv_tuning_data_sintetis.jsonl"
+with open(jsonl_filename_local, 'w') as f:
+    for i in range(JUMLAH_CONTOH):
+        cv_text = cv_samples.iloc[i]['Resume_combined']
+        jd_text = jd_samples.iloc[i]['JD_combined']
+        prompt_generasi = f"CV_SUMMARY: \"{cv_text[:1500]}\"\nJOB_DESCRIPTION: \"{jd_text[:1500]}\"\nTASK: Based on the CV and Job Description, write a high-quality, constructive feedback with 2-3 actionable suggestions."
+
+        try:
+            # Memanggil model PaLM 2
+            response = model_generasi.predict(prompt=prompt_generasi, temperature=0.3, max_output_tokens=256)
+            umpan_balik_dihasilkan = response.text
+
+            data_entry = {"input_text": f"CV: {cv_text}\nJOB_DESCRIPTION: {jd_text}\nTASK: Berikan umpan balik.", "output_text": umpan_balik_dihasilkan.strip()}
+            f.write(json.dumps(data_entry) + '\n')
+            print(f"Membuat contoh ke-{i+1}/{JUMLAH_CONTOH}")
+        except Exception as e:
+            print(f"Gagal membuat contoh ke-{i+1}: {e}")
+
+print(f"Dataset sintetis disimpan di: '{jsonl_filename_local}'")
+
+# LANGKAH 3: MENGUNGGAH DATASET KE GOOGLE CLOUD STORAGE (GCS)
+print("\n[Langkah 3] Mengunggah dataset ke GCS...")
+try:
+    storage_client = storage.Client(project=PROJECT_ID)
+    bucket = storage_client.bucket(BUCKET_NAME)
+    gcs_filename = f"datasets/{jsonl_filename_local}"
+    blob = bucket.blob(gcs_filename)
+    blob.upload_from_filename(jsonl_filename_local)
+    gcs_uri = f"gs://{BUCKET_NAME}/{gcs_filename}"
+    print(f"File diunggah ke: {gcs_uri}")
+except Exception as e:
+    print(f"Gagal mengunggah ke GCS: {e}")
+
+# LANGKAH 4: JALANKAN FINE-TUNING JOB
+print("\n--- [Langkah 4] Memulai Fine-Tuning Job... ---")
+try:
+    # Menggunakan aiplatform.TextDataset
+    dataset_vertex = aiplatform.TextDataset.create(
+        display_name="cv-feedback-sintetis-dataset",
+        gcs_source=[gcs_uri],
+        import_schema_uri=aiplatform.schema.dataset.text.sentiment.single_label
+    )
+
+    # Model dasar untuk fine-tuning yang kompatibel dengan pipeline
+    large_model_reference = "text-bison@002"
+
+    tuning_job = aiplatform.PipelineJob(
+        display_name="smart-recruiter-finetune-job",
+        template_path="https://us-kfp.pkg.dev/ml-pipeline/large-language-model-pipelines/tune-large-model/v2.0.0",
+        parameter_values={
+            "project": PROJECT_ID, "location": REGION, "model_display_name": "smart-recruiter-feedback-generator-v1",
+            "dataset_uri": dataset_vertex.uri, "large_model_reference": large_model_reference, "train_steps": 100,
+        },
+        enable_caching=False,
+    )
+    tuning_job.run()
+    print("\n**PERINTAH FINE-TUNING BERHASIL DIKIRIM!**")
+    print("Proses ini akan berjalan di background (sekitar 1-3 jam). Anda bisa memantaunya di Google Cloud Console: 'Vertex AI' -> 'Training' -> 'Pipeline Jobs'.")
+except Exception as e:
+    print(f"Gagal memulai fine-tuning job: {e}")
+
