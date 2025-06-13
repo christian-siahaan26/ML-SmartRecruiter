@@ -1,0 +1,19 @@
+# Python virtual environment
+venv/
+venv_tf/
+.venv/
+env/
+.env/
+
+# Keras/TensorFlow cache files
+.keras/
+.tensorflow/
+
+# PyTorch cache files (if any)
+.pytorch/
+
+# Other common large/ignored files
+*.pyc
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
